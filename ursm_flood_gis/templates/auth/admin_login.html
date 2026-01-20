@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set title = "Admin Login - URSM Flood GIS" %}
+
+{% block content %}
+<div class="max-w-md mx-auto rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
+  <h1 class="text-xl font-semibold">Admin Login</h1>
+  <p class="text-sm text-slate-400 mt-1">
+    Enter the admin code to access the Admin UI.
+  </p>
+
+  {% if error %}
+    <div class="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+      {{ error }}
+    </div>
+  {% else %}
+    <div class="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-300">
+      Tip: Use <code class="text-slate-200">ADMIN123</code> (you can change it later in <code>.env</code>).
+    </div>
+  {% endif %}
+
+  <form class="mt-5 space-y-3" method="post" action="/admin/login">
+    <div>
+      <label class="text-xs text-slate-400">Admin Code</label>
+      <input
+        type="password"
+        name="code"
+        placeholder="Enter admin code"
+        class="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950/40 px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-600"
+        required
+      />
+    </div>
+
+    <button
+      type="submit"
+      class="w-full rounded-xl bg-slate-100 px-3 py-2 font-semibold text-slate-900 hover:bg-white"
+    >
+      Login
+    </button>
+  </form>
+
+  <div class="mt-4 text-xs text-slate-500">
+    Later: Replace fixed code with Supabase Auth + admin role.
+  </div>
+</div>
+{% endblock %}

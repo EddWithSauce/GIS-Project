@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ title if title else "URSM Flood GIS" }}</title>
+
+  <!-- Tailwind (CDN for fast prototype) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet (GIS Map) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Chart.js (small charts) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body class="bg-slate-950 text-slate-100">
+  <header class="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+    <div class="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="h-9 w-9 rounded-xl bg-slate-800 grid place-items-center font-bold">GIS</div>
+        <div>
+          <div class="font-semibold leading-tight">URSM Flood Monitoring</div>
+          <div class="text-xs text-slate-400 -mt-0.5">Prototype (Mock data + ML standby)</div>
+        </div>
+      </div>
+
+    <nav class="flex items-center gap-2 text-sm">
+        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='dashboard' %}bg-slate-800{% endif %}" href="/">Dashboard</a>
+        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='forecast' %}bg-slate-800{% endif %}" href="/forecast">Forecast</a>
+        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='history' %}bg-slate-800{% endif %}" href="/history">History</a>
+        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='alerts' %}bg-slate-800{% endif %}" href="/alerts">Alerts & Safety</a>
+
+        <div class="w-px h-6 bg-slate-800 mx-2"></div>
+
+        {% if session.get("user_email") %}
+            <span class="text-xs text-slate-300">Hi, {{ session.get("user_email") }}</span>
+            <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/logout">Logout</a>
+        {% else %}
+            <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/login">Login</a>
+            <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/signup">Sign Up</a>
+        {% endif %}
+
+        <a class="px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800" href="/admin/login">
+            Admin
+        </a>
+    </nav>
+
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="mx-auto max-w-6xl px-4 pb-8 text-xs text-slate-500">
+    Built with Flask + Tailwind + Leaflet + Chart.js
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
