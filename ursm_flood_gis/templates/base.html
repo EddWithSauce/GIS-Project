@@ -31,25 +31,39 @@
       </div>
 
     <nav class="flex items-center gap-2 text-sm">
-        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='dashboard' %}bg-slate-800{% endif %}" href="/">Dashboard</a>
-        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='forecast' %}bg-slate-800{% endif %}" href="/forecast">Forecast</a>
-        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='history' %}bg-slate-800{% endif %}" href="/history">History</a>
-        <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='alerts' %}bg-slate-800{% endif %}" href="/alerts">Alerts & Safety</a>
+  {# If current page is under /admin, hide normal tabs and show only User Mode #}
+  {% if request.path.startswith('/admin') %}
+    <a
+      class="px-3 py-2 rounded-lg hover:bg-slate-800 border border-slate-700"
+      href="/admin/logout"
+      title="Exit Admin Panel"
+    >
+      User Mode
+    </a>
 
-        <div class="w-px h-6 bg-slate-800 mx-2"></div>
+  {% else %}
+    <!-- Normal user navigation -->
+    <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='dashboard' %}bg-slate-800{% endif %}" href="/">Dashboard</a>
+    <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='forecast' %}bg-slate-800{% endif %}" href="/forecast">Forecast</a>
+    <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='history' %}bg-slate-800{% endif %}" href="/history">History</a>
+    <a class="px-3 py-2 rounded-lg hover:bg-slate-800 {% if active=='alerts' %}bg-slate-800{% endif %}" href="/alerts">Alerts & Safety</a>
 
-        {% if session.get("user_email") %}
-            <span class="text-xs text-slate-300">Hi, {{ session.get("user_email") }}</span>
-            <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/logout">Logout</a>
-        {% else %}
-            <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/login">Login</a>
-            <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/signup">Sign Up</a>
-        {% endif %}
+    <div class="w-px h-6 bg-slate-800 mx-2"></div>
 
-        <a class="px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800" href="/admin/login">
-            Admin
-        </a>
-    </nav>
+    {# User auth UI (UI-only / or real later) #}
+    {% if session.get("user_email") %}
+      <span class="text-xs text-slate-300">Hi, {{ session.get("user_email") }}</span>
+      <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/logout">Logout</a>
+    {% else %}
+      <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/login">Login</a>
+      <a class="px-3 py-2 rounded-lg hover:bg-slate-800" href="/signup">Sign Up</a>
+    {% endif %}
+
+    <a class="px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800" href="/admin/login">
+      Admin
+    </a>
+  {% endif %}
+</nav>
 
     </div>
   </header>
