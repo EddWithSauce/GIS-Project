@@ -35,7 +35,7 @@ function buildLineChart(canvasId, labels, data, labelName) {
 }
 
 function renderTable(series) {
-  const rows = series.slice(-24).map(s => {
+  const rows = series.slice(-24).reverse().map(s => {
     return `
       <tr class="border-b border-slate-800">
         <td class="py-2 pr-3 text-slate-300">${s.time.replace("T", " ")}</td>
@@ -91,3 +91,4 @@ document.querySelectorAll(".rangeBtn").forEach(btn => {
 });
 
 render(currentRange);
+
