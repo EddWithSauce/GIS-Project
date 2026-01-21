@@ -351,11 +351,5 @@ def admin_model_monitor_page():
 def admin_validation_page():
     return render_template("admin/validation.html")
 
-@app.get("/admin/iso25010")
-@admin_required
-def admin_iso25010_page():
-    return render_template("admin/iso25010.html")
-
-
 if __name__ == "__main__":
     app.run(debug=True)
