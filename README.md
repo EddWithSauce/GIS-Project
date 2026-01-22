@@ -1,22 +1,13 @@
 # URSM Flood GIS (Prototype)
+ V1.2 Changelogs (taken from Angelo's Changes)
 
-## Run
-1) Create venv (optional)
-- python -m venv .venv
-- Windows: .venv\Scripts\activate
-- macOS/Linux: source .venv/bin/activate
+# Additions:
+  - Implemented Supabase integration and API.
+  - User Log-in and Sign-in is now authenticated using Supabase
+  - Added tables in supabase for appropriate data (please add more to this when the data isn't mock)
+  - Added user exclusivity content
 
-2) Install
-- pip install -r requirements.txt
+# Upcoming
+  - I want to implement a notification system. But I will withhold it for now until we have real data to test it to. I will test it separately in private build.
 
-3) Start
-- python app.py
-
-Open: http://127.0.0.1:5000
-
-## Notes
-- Data is MOCK right now.
-- ML is STANDBY:
-  - /api/ml/status
-  - /api/ml/predict (POST JSON)
-Later you can replace these with your trained model inference.
+Otherwise everything is identical to the previous version.
