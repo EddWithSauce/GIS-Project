@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% set title = "Admin - URSM Flood GIS" %}
+
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl font-semibold">Admin Panel</h1>
+    <p class="text-sm text-slate-400">Standby mode pages (database + device + ML will be connected later)</p>
+  </div>
+</div>
+
+<div class="flex flex-wrap gap-2 mb-6 text-sm">
+  <a class="px-3 py-2 rounded-lg hover:bg-slate-800 border border-slate-800" href="/admin">Dashboard</a>
+  <a class="px-3 py-2 rounded-lg hover:bg-slate-800 border border-slate-800" href="/admin/sensors">Sensors</a>
+  <a class="px-3 py-2 rounded-lg hover:bg-slate-800 border border-slate-800" href="/admin/logs">Raw Logs</a>
+  <a class="px-3 py-2 rounded-lg hover:bg-slate-800 border border-slate-800" href="/admin/thresholds">Thresholds</a>
+  <a class="px-3 py-2 rounded-lg hover:bg-slate-800 border border-slate-800" href="/admin/model-monitor">Model Monitor</a>
+  <a class="px-3 py-2 rounded-lg hover:bg-slate-800 border border-slate-800" href="/admin/validation">Actual vs Predicted</a>
+</div>
+
+<div class="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-200 text-sm">
+  Standby Mode: Admin features are UI-only tonight. Data will come from Supabase + device logs later.
+</div>
+
+{% block admin_content %}{% endblock %}
+{% endblock %}
