@@ -1,0 +1,25 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="mt-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+  <div class="flex items-center justify-between">
+    <div>
+      <div class="text-sm font-semibold">Raw Logs</div>
+      <div class="text-xs text-slate-400 mt-1">View raw sensor logs (standby UI, export works with demo data)</div>
+    </div>
+
+    <!-- CSV Export (works now) -->
+    <a
+      class="text-xs px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800"
+      href="/admin/export/raw-logs.csv?limit=500"
+    >
+      Export CSV
+    </a>
+  </div>
+
+  <div class="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-300">
+    Standby: No logs loaded in the table yet.
+    Export button downloads a demo CSV now, and later it will export real data from Supabase
+    <code>sensor_logs</code>.
+  </div>
+</div>
+{% endblock %}
