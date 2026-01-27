@@ -4,7 +4,7 @@
   <div class="flex items-center justify-between">
     <div>
       <div class="text-sm font-semibold">Raw Logs</div>
-      <div class="text-xs text-slate-400 mt-1">View raw sensor logs (standby UI, export works with demo data)</div>
+      <div class="text-xs text-slate-400 mt-1">View raw sensor logs (table UI standby; export pulls from Supabase when available)</div>
     </div>
 
     <!-- CSV Export (works now) -->
@@ -17,9 +17,9 @@
   </div>
 
   <div class="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-300">
-    Standby: No logs loaded in the table yet.
-    Export button downloads a demo CSV now, and later it will export real data from Supabase
-    <code>sensor_logs</code>.
+    The table view is standby for now, but the CSV export is ready.
+    If your Supabase <code>sensor_logs</code> already has rows, the export will download real logs.
+    If not, it will download a small standby CSV so the feature can be tested.
   </div>
 </div>
 {% endblock %}

@@ -14,7 +14,7 @@ def _now_str():
 
 
 # Adjust map center here (URSM area-ish; change if you have exact URSM Creek coords)
-MAP_CENTER = {"lat": 14.516677, "lng": 121.235619, "zoom": 15}
+MAP_CENTER = {"lat": 14.516677, "lng": 121.235619, "zoom": 19}
 
 RAIN_CLASSES = ["No Rain", "Light", "Moderate", "Heavy"]
 FLOOD_CLASSES = ["Normal", "Warning", "Critical"]

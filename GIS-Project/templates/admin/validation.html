@@ -4,14 +4,14 @@
   <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
     <div>
       <div class="text-sm font-semibold">Actual vs Predicted Validation</div>
-      <div class="text-xs text-slate-400 mt-1">Table + chart, filter by date range, export CSV (standby)</div>
+      <div class="text-xs text-slate-400 mt-1">Table + chart, filter by date range, export CSV</div>
     </div>
 
     <div class="flex items-center gap-2">
-      <input disabled class="rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-2 text-sm" type="date">
-      <input disabled class="rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-2 text-sm" type="date">
-      <button disabled class="text-xs px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800">
-        Apply (Standby)
+      <input id="valStart" class="rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-2 text-sm" type="date">
+      <input id="valEnd" class="rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-2 text-sm" type="date">
+      <button id="btnApply" class="text-xs px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800">
+        Apply
       </button>
     </div>
   </div>
@@ -40,7 +40,8 @@
       </div>
 
       <div class="mt-3 text-sm text-slate-400">
-        Standby: validation records will come from Supabase <code>predictions</code> + <code>sensor_logs</code>.
+        Validation records will come from Supabase <code>predictions</code> + <code>sensor_logs</code>.
+        <span id="filterInfo" class="block text-xs text-slate-500 mt-1">No date filter applied.</span>
       </div>
     </div>
   </div>

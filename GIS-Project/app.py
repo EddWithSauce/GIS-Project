@@ -2,62 +2,48 @@ from dotenv import load_dotenv
 load_dotenv()
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for, render_template, Response
 from datetime import datetime, timedelta
-import random, os, csv, smtplib
+import os, csv, smtplib
 from functools import wraps
 from supabase_client import supabase_admin, supabase_public
+from data_provider import get_provider
+import ml_service
+import config
 from io import StringIO
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from utils.time_utils import now_iso
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "fakumaniggasecretkey")
-ADMIN_CODE = os.getenv("ADMIN_CODE", "ADMIN123")
-
-
-# ---- CONFIG: URSM Creek center (EDIT THIS) ----
-URSM_CREEK_CENTER = {
-    "lat": 14.517697,   # <-- change to your real center coordinate
-    "lng": 121.235711,  # <-- change to your real center coordinate
-    "zoom": 18
-}
-
-# ---- Mock "status logic" (replace later with real rules/ML) ----
-def classify_rainfall(mm_per_hr: float) -> str:
-    # Simple demo thresholds; adjust based on your project standard
-    if mm_per_hr <= 0.1:
-        return "No Rain"
-    if mm_per_hr < 2.5:
-        return "Light"
-    if mm_per_hr < 7.5:
-        return "Moderate"
-    return "Heavy"
-
-def flood_status_from_waterlevel(water_level_m: float) -> str:
-    # Simple demo thresholds; adjust based on URSM creek calibration
-    if water_level_m < 0.8:
-        return "Normal"
-    if water_level_m < 1.2:
-        return "Warning"
-    return "Critical"
-
-def risk_level_from_status(flood_status: str) -> str:
-    # For marker coloring / segments
-    if flood_status == "Normal":
-        return "low"
-    if flood_status == "Warning":
-        return "medium"
-    return "high"
-
-def now_iso():
-    return datetime.now().isoformat(timespec="seconds")
+app.secret_key = config.SECRET_KEY
+ADMIN_CODE = config.ADMIN_CODE
 
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("user_email"):
-            return redirect(url_for("login_page"))
+        if not session.get("user_id"):
+            # send them to login, then back to the page they wanted
+            next_url = request.path
+            return redirect(url_for("login_page", next=next_url))
         return view(*args, **kwargs)
     return wrapped
+"""URSM Flood GIS (Phase 5)
+
+Phase 5 goals:
+- Keep all routes stable, but reduce mock dependence.
+- Prefer Supabase for data reads/exports.
+- Keep graceful fallbacks (UI won't crash when tables are empty).
+"""
+
+# Data provider (Phase 1+ refactor)
+provider = get_provider()
+
+
+
+URSM_CREEK_CENTER = {
+    "lat": config.URSM_CENTER_LAT,
+    "lng": config.URSM_CENTER_LNG,
+    "zoom": config.URSM_CENTER_ZOOM
+}
 
 def admin_required(view):
     @wraps(view)
@@ -216,66 +202,67 @@ def should_send_again(sb, user_id: str, level: str, cooldown_minutes: int = 10) 
         .execute()
     return len(res.data) == 0
 
-def auto_notify_if_needed(current_snapshot: dict):
+def auto_notify_if_needed(station_id: str, current_snapshot: dict, latest_prediction: dict | None = None):
     """
     Automatically create web notifications + send email when status is Warning/Critical.
-    Uses mock forecast now; later replace forecast and values with real data.
+
+    Phase 4 update:
+    - Uses latest prediction payload (if available) to populate:
+      rainfall intensity, predicted flood risk, and 'hours before flooding' (standby if not provided yet).
+    - Uses cooldowns to avoid email/web spam.
     """
 
-    flood_status = current_snapshot["flood"]["status"]         # Normal/Warning/Critical
+    flood_status = current_snapshot["flood"]["status"]  # Normal/Warning/Critical (based on current water level)
     water_level = current_snapshot["sensors"]["water_level"]
-    rain_class_now = current_snapshot["rainfall"]["classification"]
 
     # Only notify on Warning/Critical
     if flood_status not in ["Warning", "Critical"]:
         return {"sent": 0, "reason": "status_normal"}
 
-    # Build forecast-based "hours before flood"
-    forecast = api_forecast().get_json()  # reuse your existing endpoint logic
-    rain_next = forecast["rainfall_next_hours"]
-    flood_next = forecast["flood_prediction_next_hours"]
+    # Pull extra prediction info if present
+    predicted_flood_risk = current_snapshot["flood"].get("predicted_risk") or flood_status
+    predicted_rain_intensity = current_snapshot["rainfall"].get("classification") or "Unknown"
+    peak_rain = current_snapshot["rainfall"].get("mm_per_hr")
 
-    peak_rain = max([x["mm_per_hr"] for x in rain_next]) if rain_next else 0.0
-    predicted_rain_intensity = classify_rainfall(peak_rain)
-    hrs = hours_until_critical(flood_next)
+    hrs = None
+    if latest_prediction:
+        predicted_flood_risk = latest_prediction.get("predicted_risk") or predicted_flood_risk
+        pl = latest_prediction.get("payload") or {}
+        predicted_rain_intensity = pl.get("predicted_rainfall_intensity") or predicted_rain_intensity
+        hrs = pl.get("hours_before_flood")
 
-    hours_text = f"~{hrs} hour(s)" if hrs is not None else "Unknown (no critical event in forecast window)"
+    hours_text = f"~{hrs} hour(s)" if isinstance(hrs, (int, float)) else "Unknown (standby)"
 
     payload = {
         "predicted_rainfall_intensity": predicted_rain_intensity,
-        "peak_rain_mm_hr": round(peak_rain, 2),
+        "peak_rain_mm_hr": peak_rain,
         "alert_level": flood_status,
-        "predicted_flood_risk": flood_status,   # standby; replace with ML prediction
+        "predicted_flood_risk": predicted_flood_risk,
         "current_water_level_m": water_level,
         "hours_before_flood": hrs,
         "hours_text": hours_text
     }
 
     title = f"[{flood_status}] URSM Flood Alert"
-
-    if flood_status == "Critical":
-        message = build_critical_message(payload)
-    else:
-        message = build_warning_message(payload)
+    message = build_critical_message(payload) if flood_status == "Critical" else build_warning_message(payload)
 
     # Send to all users in Supabase Auth
     sb = supabase_admin()
     users = list_auth_users_basic()
 
-
-
     sent = 0
+    cooldown = config.COOLDOWN_CRITICAL_MIN if flood_status == "Critical" else config.COOLDOWN_WARNING_MIN
+
     for u in users:
         # prevent spam (cooldown)
-        cooldown = 15 if flood_status == "Warning" else 5
         if not should_send_again(sb, u["id"], flood_status, cooldown_minutes=cooldown):
             continue
 
-        # store web notification
+        # store web notification (Supabase table: user_notifications)
         sb.table("user_notifications").insert({
             "user_id": u["id"],
             "email": u["email"],
-            "station_id": None,  # later: station id
+            "station_id": station_id,
             "alert_level": flood_status,
             "title": title,
             "message": message,
@@ -293,6 +280,8 @@ def auto_notify_if_needed(current_snapshot: dict):
         sent += 1
 
     return {"sent": sent, "reason": "notified"}
+
+
 
 # -------------------- Pages --------------------
 @app.route("/")
@@ -319,198 +308,203 @@ def alerts_page():
 # -------------------- API: Current snapshot --------------------
 @app.route("/api/config")
 def api_config():
-    return jsonify({
-        "map_center": URSM_CREEK_CENTER
-    })
+    cfg = provider.get_config()
+    return jsonify({"map_center": cfg["map_center"], "mode": cfg.get("mode","STANDBY")})
 
 @app.route("/api/current")
 def api_current():
-    # Mock sensor readings
-    water_level = round(random.uniform(0.4, 1.5), 2)
-    rain_mm_hr = round(random.choice([0.0, 0.2, 1.2, 4.3, 9.1]), 1)
-
-    rainfall_class = classify_rainfall(rain_mm_hr)
-    flood_status = flood_status_from_waterlevel(water_level)
-
-    payload = {
-        "last_updated": now_iso(),
-        "rainfall": {
-            "mm_per_hr": rain_mm_hr,
-            "classification": rainfall_class
-        },
-        "flood": {
-            "status": flood_status,
-            "predicted_risk": flood_status  # placeholder until ML
-        },
-        "sensors": {
-            "humidity": round(random.uniform(55, 95), 1),
-            "temperature": round(random.uniform(23, 34), 1),
-            "wind": round(random.uniform(0, 12), 1),
-            "water_level": water_level
-        }
-    }
-    try:
-        auto_notify_if_needed(payload)
-    except Exception as e:
-    # don't break dashboard if notify fails
-        print("[NOTIFY ERROR]", e)
+    # Phase 1: data comes from provider (MockProvider in STANDBY)
+    payload = provider.get_current_snapshot()
 
     return jsonify(payload)
 
+
+# -------------------- Device Ingestion (Raspberry Pi) --------------------
+@app.post("/api/sensors/ingest")
+def api_sensors_ingest():
+    """Raspberry Pi -> Flask -> Supabase
+
+    Expected JSON:
+    {
+      "station_code": "URSM_01",
+      "humidity": 72.5,
+      "temperature": 29.1,
+      "wind": 1.2,
+      "rain_mm_hr": 3.4,
+      "water_level_m": 0.91,
+      "lat": 14.517697,        # optional (only used if creating station)
+      "lng": 121.235711        # optional
+    }
+
+    Security:
+    - If DEVICE_API_KEY is set in .env, client must send header: X-API-KEY: <key>
+    """
+    # simple API key check (recommended)
+    if config.DEVICE_API_KEY:
+        provided = request.headers.get("X-API-KEY", "")
+        if provided != config.DEVICE_API_KEY:
+            return jsonify({"ok": False, "error": "Unauthorized device"}), 401
+
+    data = request.get_json(silent=True) or {}
+    station_code = (data.get("station_code") or "").strip()
+    if not station_code:
+        return jsonify({"ok": False, "error": "station_code is required"}), 400
+
+
+    # One-station mode: force all ingests into the default station (ignore other station codes)
+    if config.ONE_STATION_MODE:
+        if station_code != config.DEFAULT_STATION_CODE:
+            station_code = config.DEFAULT_STATION_CODE
+    sb = supabase_admin()
+
+    # Find (or create) station
+    st_res = sb.table("stations").select("*").eq("station_code", station_code).limit(1).execute()
+    station = st_res.data[0] if st_res.data else None
+
+    if not station:
+        lat = data.get("lat")
+        lng = data.get("lng")
+        name = data.get("name") or (config.DEFAULT_STATION_NAME if config.ONE_STATION_MODE else station_code)
+
+        # If station is missing and lat/lng not provided, auto-create using default center + offsets.
+        if lat is None or lng is None:
+            lat, lng = config.default_station_latlng()
+
+        ins = sb.table("stations").insert({"station_code": station_code, "name": name, "lat": lat, "lng": lng}).execute()
+        station = ins.data[0] if ins.data else None
+
+    station_id = station["id"]
+
+    # Insert sensor log
+    log_row = {
+        "station_id": station_id,
+        "humidity": data.get("humidity"),
+        "temperature": data.get("temperature"),
+        "wind": data.get("wind"),
+        "rain_mm_hr": data.get("rain_mm_hr"),
+        "water_level_m": data.get("water_level_m"),
+        "payload": data  # keep raw
+    }
+    sb.table("sensor_logs").insert(log_row).execute()
+
+    # Phase 4: write a prediction row (standby rules now; ML later)
+    pred_row = None
+    if config.PREDICT_ON_INGEST:
+        try:
+            pred_row = ml_service.write_prediction_from_log(station_id, log_row, sb=sb)
+        except Exception as e:
+            print("[PREDICT ERROR]", e)
+
+
+    # Update sensor health table (sensors)
+    sensor_types = [
+        ("humidity", data.get("humidity")),
+        ("temperature", data.get("temperature")),
+        ("wind", data.get("wind")),
+        ("rain", data.get("rain_mm_hr")),
+        ("water_level", data.get("water_level_m")),
+    ]
+    now_ts = datetime.now().isoformat()
+
+    for stype, val in sensor_types:
+        # if value is missing, don't mark online (but still keep record)
+        is_online = val is not None
+        existing = sb.table("sensors").select("id").eq("station_id", station_id).eq("sensor_type", stype).limit(1).execute()
+        if existing.data:
+            sb.table("sensors").update({
+                "is_online": is_online,
+                "last_data_received": now_ts if is_online else None,
+                "missing_data_count": 0 if is_online else 1
+            }).eq("id", existing.data[0]["id"]).execute()
+        else:
+            sb.table("sensors").insert({
+                "station_id": station_id,
+                "sensor_type": stype,
+                "is_online": is_online,
+                "last_data_received": now_ts if is_online else None,
+                "missing_data_count": 0 if is_online else 1,
+                "notes": "Auto-created by /api/sensors/ingest"
+            }).execute()
+
+    # Optional: trigger notifications here (avoid spamming on dashboard refresh)
+    if config.NOTIFY_ENABLED:
+        try:
+            # ensure provider is refreshed in LIVE mode
+            current = provider.get_current_snapshot()
+            auto_notify_if_needed(station_id, current, pred_row)
+        except Exception as e:
+            print("[NOTIFY ERROR]", e)
+
+    return jsonify({"ok": True, "station_id": station_id, "received_at": now_ts})
+
+
 # -------------------- User Exclusivity Module --------------------
-def login_required(view):
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        if not session.get("user_id"):
-            # send them to login, then back to the page they wanted
-            next_url = request.path
-            return redirect(url_for("login_page", next=next_url))
-        return view(*args, **kwargs)
-    return wrapped
+
 
 # -------------------- API: Map features (markers + segments) --------------------
 @app.route("/api/map/features")
 def api_map_features():
-    # Mock “segments” and “markers” around the center.
-    lat = URSM_CREEK_CENTER["lat"]
-    lng = URSM_CREEK_CENTER["lng"]
-
-    # Create a few sample points along a creek-like line
-    points = [
-        {"id": "p1", "name": "Device Point",  "lat": lat - 0.0002, "lng": lng + 0.0000},
-    ]
-
-    markers = []
-    segments = []
-
-    for p in points:
-        water_level = round(random.uniform(0.4, 1.5), 2)
-        rain_mm_hr = round(random.choice([0.0, 0.2, 1.2, 4.3, 9.1]), 1)
-        rainfall_class = classify_rainfall(rain_mm_hr)
-        flood_status = flood_status_from_waterlevel(water_level)
-        risk = risk_level_from_status(flood_status)
-
-        markers.append({
-            "id": p["id"],
-            "name": p["name"],
-            "lat": p["lat"],
-            "lng": p["lng"],
-            "risk_level": risk,
-            "popup": {
-                "water_level_m": water_level,
-                "predicted_flood_risk": flood_status,   # placeholder
-                "rainfall_classification": rainfall_class
-            }
-        })
-
-    # Segment lines between markers, colored by "worst" risk
-    for i in range(len(points) - 1):
-        a = markers[i]
-        b = markers[i + 1]
-        worst = "low"
-        for r in [a["risk_level"], b["risk_level"]]:
-            if r == "high":
-                worst = "high"
-            elif r == "medium" and worst != "high":
-                worst = "medium"
-
-        segments.append({
-            "id": f"s{i+1}",
-            "risk_level": worst,
-            "path": [[a["lat"], a["lng"]], [b["lat"], b["lng"]]]
-        })
-
-    return jsonify({
-        "markers": markers,
-        "segments": segments
-    })
+    feats = provider.get_map_features()
+    return jsonify(feats)
 
 
 # -------------------- API: Forecast (mock) --------------------
 @app.route("/api/forecast")
 def api_forecast():
-    # Next 12 hours mock forecast
-    start = datetime.now().replace(minute=0, second=0, microsecond=0)
-    rainfall = []
-    water_level = []
-    flood_pred = []
-
-    base_wl = random.uniform(0.5, 1.1)
-    for h in range(12):
-        t = start + timedelta(hours=h)
-        rain = max(0.0, random.gauss(2.0, 2.0))  # mm/hr
-        wl = max(0.3, base_wl + (rain * 0.04) + random.uniform(-0.05, 0.05))
-        status = flood_status_from_waterlevel(wl)
-
-        rainfall.append({"time": t.isoformat(timespec="minutes"), "mm_per_hr": round(rain, 2)})
-        water_level.append({"time": t.isoformat(timespec="minutes"), "water_level_m": round(wl, 2)})
-        flood_pred.append({"time": t.isoformat(timespec="minutes"), "status": status})
-
-    return jsonify({
-        "last_updated": now_iso(),
-        "rainfall_next_hours": rainfall,
-        "water_level_trend": water_level,
-        "flood_prediction_next_hours": flood_pred,
-        "note": "Forecast is mock data. Replace with weather API + ML when ready."
-    })
+    data = provider.get_forecast()
+    return jsonify(data)
 
 
 # -------------------- API: History (mock) --------------------
 @app.route("/api/history")
 def api_history():
-    # query: range=24h or 7d
     range_q = request.args.get("range", "24h")
-    now = datetime.now().replace(second=0, microsecond=0)
-
-    if range_q == "7d":
-        points = 7 * 24  # hourly for 7 days
-        step = timedelta(hours=1)
-    else:
-        points = 24 * 6  # every 10 minutes for 24 hours
-        step = timedelta(minutes=10)
-
-    series = []
-    for i in range(points):
-        t = now - step * (points - 1 - i)
-        rain = max(0.0, random.gauss(1.2, 1.5))
-        wl = max(0.3, 0.7 + (rain * 0.05) + random.uniform(-0.08, 0.08))
-        rainfall_class = classify_rainfall(rain)
-        flood_status = flood_status_from_waterlevel(wl)
-
-        series.append({
-            "time": t.isoformat(timespec="minutes"),
-            "rain_mm_hr": round(rain, 2),
-            "rain_class": rainfall_class,
-            "water_level_m": round(wl, 2),
-            "flood_status": flood_status
-        })
-
-    return jsonify({
-        "range": range_q,
-        "last_updated": now_iso(),
-        "series": series,
-        "note": "History is mock data. Replace with database (SQLite/Postgres) when sensor logging is ready."
-    })
+    data = provider.get_history(range_q)
+    return jsonify(data)
 
 
 # -------------------- ML Standby Endpoints --------------------
 @app.route("/api/ml/status")
 def api_ml_status():
+    is_ml = bool(config.AI_READY) and config.MODEL_DRIVER != "standby"
     return jsonify({
-        "ml_ready": False,
-        "message": "Standby mode: ML model not connected yet.",
-        "how_to_enable": "Later: load your trained model and set ml_ready=True; route /api/ml/predict should call the model."
+        "ml_ready": is_ml,
+        "mode": "ML" if is_ml else "STANDBY",
+        "model_driver": config.MODEL_DRIVER,
+        "message": "ML is enabled." if is_ml else "Standby mode: predictions are rule-based until ML is connected.",
+        "how_to_enable": "Set AI_READY=true and configure MODEL_DRIVER + model files in ./models/ (see config.py / ml_service.py)."
     })
 
 @app.route("/api/ml/predict", methods=["POST"])
 def api_ml_predict():
-    # Standby: accept input but return placeholder
-    # Later: use request.json as input features for your ML model
+    # Phase 4: Returns a standby prediction for the provided input (no DB write).
+    data = request.get_json(silent=True) or {}
+    wl = data.get("water_level_m")
+    rain = data.get("rain_mm_hr")
+    wl_warning = config.WL_WARNING_M
+    wl_critical = config.WL_CRITICAL_M
+    try:
+        wl_val = float(wl) if wl is not None else None
+    except Exception:
+        wl_val = None
+    try:
+        rain_val = float(rain) if rain is not None else None
+    except Exception:
+        rain_val = None
+
+    predicted_rain_intensity = classify_rainfall(rain_val or 0.0) if rain_val is not None else "Unknown"
+    predicted_risk = "Unknown"
+    if wl_val is not None:
+        predicted_risk = flood_status_from_waterlevel(wl_val)
+
     return jsonify({
-        "ml_ready": False,
-        "predicted_flood_risk": "Unknown",
-        "details": "Standby mode. No model loaded.",
-        "received_input": request.json
+        "ml_ready": bool(config.AI_READY) and config.MODEL_DRIVER != "standby",
+        "mode": "STANDBY",
+        "predicted_rainfall_intensity": predicted_rain_intensity,
+        "predicted_flood_risk": predicted_risk,
+        "hours_before_flood": None,
+        "received_input": data,
+        "note": "Standby prediction only. Real ML inference will replace this later."
     })
 
 # -------------------- Auth Routes --------------------
@@ -632,13 +626,62 @@ def db_test():
     })
 
 # -------------------- CSV (Raw Logs + Validation) --------------------
+
+def _get_default_station_id(sb):
+    """Best-effort station id for one-station mode.
+
+    Priority:
+    1) station_code == config.DEFAULT_STATION_CODE
+    2) first station row
+    """
+    try:
+        if getattr(config, "DEFAULT_STATION_CODE", None):
+            r = sb.table("stations").select("id").eq("station_code", config.DEFAULT_STATION_CODE).limit(1).execute()
+            if r.data:
+                return r.data[0]["id"]
+    except Exception:
+        pass
+    try:
+        r = sb.table("stations").select("id").order("created_at", desc=True).limit(1).execute()
+        if r.data:
+            return r.data[0]["id"]
+    except Exception:
+        pass
+    return None
+
+
 @app.get("/admin/export/raw-logs.csv")
 @admin_required
 def export_raw_logs_csv():
     limit = int(request.args.get("limit", "200"))
     limit = max(1, min(limit, 5000))
 
-    logs = demo_raw_logs(limit=limit)
+    sb = supabase_admin()
+    station_id = _get_default_station_id(sb)
+
+    logs = []
+    try:
+        q = sb.table("sensor_logs").select(
+            "created_at,station_id,humidity,temperature,wind,rain_mm_hr,water_level_m"
+        ).order("created_at", desc=True).limit(limit)
+        if station_id:
+            q = q.eq("station_id", station_id)
+        res = q.execute()
+        logs = res.data or []
+    except Exception as e:
+        print("[CSV RAW LOGS ERROR]", e)
+
+    # Fallback: keep a minimal CSV so you can test the download button
+    if not logs:
+        logs = [{
+            "created_at": now_iso(),
+            "station_id": station_id or "STATION_DEMO_01",
+            "humidity": None,
+            "temperature": None,
+            "wind": None,
+            "rain_mm_hr": None,
+            "water_level_m": None,
+        }]
 
     headers = [
         "timestamp",
@@ -651,21 +694,20 @@ def export_raw_logs_csv():
         "source"
     ]
 
-    rows = [
-        [
-            x["timestamp"],
-            x["station_id"],
-            x["humidity"],
-            x["temperature"],
-            x["wind"],
-            x["rain_mm_hr"],
-            x["water_level_m"],
-            x["source"],
-        ]
-        for x in logs
-    ]
+    rows = []
+    for x in logs:
+        rows.append([
+            (x.get("created_at") or "").replace("T", " ")[:19],
+            x.get("station_id"),
+            x.get("humidity"),
+            x.get("temperature"),
+            x.get("wind"),
+            x.get("rain_mm_hr"),
+            x.get("water_level_m"),
+            "SUPABASE" if x.get("humidity") is not None or x.get("water_level_m") is not None else "STANDBY",
+        ])
 
-    return csv_response("raw_logs_standby.csv", headers, rows)
+    return csv_response("raw_logs.csv", headers, rows)
 
 @app.get("/admin/export/validation.csv")
 @admin_required
@@ -674,12 +716,41 @@ def export_validation_csv():
     start = request.args.get("start")  # YYYY-MM-DD
     end = request.args.get("end")      # YYYY-MM-DD
 
-    # Standby: ignore filters for now, but keep the parameters.
-    data = demo_validation(limit=120)
+    sb = supabase_admin()
+    station_id = _get_default_station_id(sb)
+
+    # Pull from predictions table. For "actual" values, we use payload.inputs when available.
+    data = []
+    try:
+        q = sb.table("predictions").select(
+            "created_at,station_id,predicted_risk,predicted_water_level_m,model_version,payload"
+        ).order("created_at", desc=True).limit(500)
+        if station_id:
+            q = q.eq("station_id", station_id)
+        # Optional date filters (YYYY-MM-DD)
+        if start:
+            q = q.gte("created_at", f"{start}T00:00:00")
+        if end:
+            q = q.lte("created_at", f"{end}T23:59:59")
+        res = q.execute()
+        data = res.data or []
+    except Exception as e:
+        print("[CSV VALIDATION ERROR]", e)
+
+    if not data:
+        data = [{
+            "created_at": now_iso(),
+            "station_id": station_id or "STATION_DEMO_01",
+            "predicted_risk": "Unknown",
+            "predicted_water_level_m": None,
+            "model_version": config.STANDBY_MODEL_VERSION,
+            "payload": {"notes": "No prediction rows yet."}
+        }]
 
     headers = [
         "timestamp",
-        
+        "station_id",
+        "actual_water_level_m",
         "actual_flood_event",
         "predicted_flood_risk",
         "predicted_water_level_m",
@@ -687,82 +758,26 @@ def export_validation_csv():
         "notes"
     ]
 
-    rows = [
-        [
-            x["timestamp"],
-            x["station_id"],
-            x["actual_water_level_m"],
-            x["actual_flood_event"],
-            x["predicted_flood_risk"],
-            x["predicted_water_level_m"],
-            x["model_version"],
-            x["notes"],
-        ]
-        for x in data
-    ]
+    rows = []
+    for x in data:
+        payload = x.get("payload") or {}
+        inputs = (payload.get("inputs") or {}) if isinstance(payload, dict) else {}
+        actual_wl = inputs.get("water_level_m")
+        actual_flood_event = "YES" if (actual_wl is not None and float(actual_wl) >= config.WL_CRITICAL_M) else "NO"
 
-    filename = "validation_standby.csv"
+        rows.append([
+            (x.get("created_at") or "").replace("T", " ")[:19],
+            x.get("station_id"),
+            actual_wl,
+            actual_flood_event,
+            x.get("predicted_risk"),
+            x.get("predicted_water_level_m"),
+            x.get("model_version"),
+            payload.get("notes") if isinstance(payload, dict) else "",
+        ])
+
+    filename = "validation.csv"
     return csv_response(filename, headers, rows)
-
-def demo_raw_logs(limit: int = 100):
-    """
-    Standby raw logs. Replace later with Supabase query from sensor_logs table.
-    """
-    rows = []
-    base = datetime.now().replace(second=0, microsecond=0)
-    for i in range(limit):
-        t = base - timedelta(minutes=i * 10)
-        humidity = round(random.uniform(55, 95), 1)
-        temp = round(random.uniform(23, 34), 1)
-        wind = round(random.uniform(0, 12), 1)
-        rain = round(max(0.0, random.gauss(1.2, 1.5)), 2)
-        wl = round(max(0.3, 0.7 + (rain * 0.05) + random.uniform(-0.08, 0.08)), 2)
-
-        rows.append({
-            "timestamp": t.isoformat(timespec="minutes"),
-            "station_id": "STATION_DEMO_01",
-            "humidity": humidity,
-            "temperature": temp,
-            "wind": wind,
-            "rain_mm_hr": rain,
-            "water_level_m": wl,
-            "source": "STANDBY"
-        })
-    return rows
-
-
-def demo_validation(limit: int = 60):
-    """
-    Standby validation data. Replace later by joining sensor_logs + predictions.
-    """
-    rows = []
-    base = datetime.now().replace(second=0, microsecond=0)
-    for i in range(limit):
-        t = base - timedelta(hours=(limit - i))
-        actual_wl = round(random.uniform(0.4, 1.5), 2)
-
-        # predicted risk (standby)
-        if actual_wl < 0.8:
-            pred_risk = "Normal"
-        elif actual_wl < 1.2:
-            pred_risk = "Warning"
-        else:
-            pred_risk = "Critical"
-
-        # simple fake predicted WL (optional)
-        predicted_wl = round(actual_wl + random.uniform(-0.12, 0.12), 2)
-
-        rows.append({
-            "timestamp": t.isoformat(timespec="minutes"),
-            "station_id": "STATION_DEMO_01",
-            "actual_water_level_m": actual_wl,
-            "actual_flood_event": "YES" if actual_wl >= 1.2 else "NO",
-            "predicted_flood_risk": pred_risk,
-            "predicted_water_level_m": predicted_wl,
-            "model_version": "STANDBY_MODEL_v0",
-            "notes": "Standby demo"
-        })
-    return rows
 
 # -------------------- Notification --------------------
 @app.get("/notifications")
